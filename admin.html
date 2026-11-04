@@ -461,6 +461,28 @@
     fetchAndShowImage(photoRow, r.photoFileId, 90, 76);
     fetchAndShowImage(photoRow, r.signatureFileId, 130, 50);
 
+    // Supporting documents (Aadhaar front/back, TC, Matric certificate) — same on-demand
+    // private fetch as the photo/signature; click a document to open it full size.
+    var docRow = document.createElement('div');
+    docRow.style.cssText = 'display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 14px;';
+    [['aadharFrontFileId', 'आधार (आगे)'], ['aadharBackFileId', 'आधार (पीछे)'], ['tcFileId', 'TC'], ['matricFileId', 'मैट्रिक प्रमाण पत्र']].forEach(function(d){
+      if(!r[d[0]]) return;
+      var cell = document.createElement('div');
+      cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);';
+      var box = document.createElement('div');
+      box.style.cursor = 'zoom-in';
+      box.onclick = function(){
+        var im = box.querySelector('img');
+        if(!im) return;
+        var w = window.open('');
+        if(w){ w.document.title = d[1]; w.document.body.style.margin = '0'; w.document.body.innerHTML = '<img src="' + im.src + '" style="max-width:100%;display:block;margin:0 auto;">'; }
+      };
+      var cap = document.createElement('span'); cap.textContent = d[1];
+      cell.appendChild(box); cell.appendChild(cap); docRow.appendChild(cell);
+      fetchAndShowImage(box, r[d[0]], 150, 105);
+    });
+    if(docRow.children.length) modalContent.appendChild(docRow);
+
     var table = document.createElement('table');
     Object.keys(fieldLabels).forEach(function(k){
       if(!r[k]) return;
