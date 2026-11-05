@@ -51,9 +51,10 @@ var HEADERS = [
   'distance', 'cwsn', 'income', 'bloodGroup', 'height', 'weight',
   'prevUdise',
   'bankAccount', 'ifsc', 'bankName', 'accHolder', 'accRelation',
-  'photoFileId', 'signatureFileId'  // Drive file IDs — files are private; bytes are only ever
+  'photoFileId', 'signatureFileId',  // Drive file IDs — files are private; bytes are only ever
     // returned embedded in an authorized response (submit/edit/reveal) or via the admin
     // getImage action, never as a standalone public URL. See ARCHITECTURE.md.
+  'aadharFrontFileId', 'aadharBackFileId', 'tcFileId', 'matricFileId'  // supporting documents (private Drive files, same model as the photo/signature)
   // deviceInfo / geoLocationName / geoLocationLink (browser-reported device info and
   // consent-based location logging) have been removed by request. Existing rows that
   // already have data under those old column headers are untouched — getSheet_() only
@@ -212,6 +213,32 @@ function resolveFileId_(record, newKey, legacyKey) {
     if (m) return m[1];
   }
   return '';
+}
+
+/**
+ * Supporting documents uploaded with an application. `key` is the field name
+ * the form sends, `header` the sheet column that holds the private Drive file
+ * ID, `suffix` is added to the Drive file name.
+ */
+var DOC_FIELDS = [
+  { key: 'aadharFront', header: 'aadharFrontFileId', suffix: '_aadharFront' },
+  { key: 'aadharBack',  header: 'aadharBackFileId',  suffix: '_aadharBack' },
+  { key: 'tc',          header: 'tcFileId',          suffix: '_tc' },
+  { key: 'matric',      header: 'matricFileId',      suffix: '_matric' }
+];
+
+/**
+ * Like saveImage_, but a bare Drive file ID is only accepted when it is the
+ * very file already stored on this application's own row (the "edit without
+ * touching this document" case). Any other bare ID is ignored, so an
+ * applicant can't point their record at somebody else's file.
+ */
+function saveDocImage_(input, filenamePrefix, existingId) {
+  var str = String(input || '');
+  if (str && str.indexOf('data:') !== 0) {
+    return { fileId: (existingId && str === String(existingId)) ? str : '', error: null };
+  }
+  return saveImage_(input, filenamePrefix);
 }
 
 // =================================================================
@@ -519,6 +546,20 @@ function handleSubmit_(body) {
 
     var photoFileId = photoResult.fileId;
     var signatureFileId = sigResult.fileId;
+
+    // Supporting documents (Aadhaar front/back, TC, Matric certificate)
+    var docIds = {};
+    for (var d = 0; d < DOC_FIELDS.length; d++) {
+      var df = DOC_FIELDS[d];
+      var existingDocId = (isEdit && existingRowIndex > 0 && headers.indexOf(df.header) !== -1)
+        ? data[existingRowIndex - 1][headers.indexOf(df.header)] : '';
+      var docResult = saveDocImage_(body[df.key], appId + df.suffix, existingDocId);
+      if (docResult.error) {
+        return jsonOut_({ success: false, error: docResult.error, field: df.key });
+      }
+      // nothing (new) supplied on an edit -> keep what is already stored
+      docIds[df.header] = docResult.fileId || (isEdit ? String(existingDocId || '') : '');
+    }
     var dobFormatted = formatDateDMY_(body.dob);
     var nowTimestamp = Utilities.formatDate(new Date(), TIMEZONE, 'dd-MM-yyyy HH:mm');
 
@@ -531,6 +572,7 @@ function handleSubmit_(body) {
       if (key === 'otr') return cleanOtr;
       if (key === 'photoFileId') return photoFileId;
       if (key === 'signatureFileId') return signatureFileId;
+      if (docIds.hasOwnProperty(key)) return docIds[key];
       return body[key] !== undefined ? String(body[key]).trim() : '';
     });
 
@@ -734,6 +776,9 @@ function handleLoadForEdit_(body) {
       record.signatureFileId = resolveFileId_(record, 'signatureFileId', 'signatureUrl');
       record.photoDataUri = imageDataUri_(record.photoFileId);
       record.signatureDataUri = imageDataUri_(record.signatureFileId);
+      DOC_FIELDS.forEach(function (df) {
+        record[df.key + 'DataUri'] = imageDataUri_(record[df.header]);
+      });
       return jsonOut_({ success: true, record: record });
     }
   }
@@ -901,6 +946,7 @@ function maskRecordForPreview_(record) {
   masked.signatureUrl = '';
   masked.photoFileId = ''; // current field — same reasoning
   masked.signatureFileId = '';
+  DOC_FIELDS.forEach(function (df) { masked[df.header] = ''; }); // supporting documents — same reasoning
   return masked;
 }
 
