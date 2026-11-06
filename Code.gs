@@ -469,6 +469,7 @@ function doPost(e) {
     if (body.action === 'adminList') return handleAdminList_(body);
     if (body.action === 'adminExport') return handleAdminExport_(body);
     if (body.action === 'adminDelete') return handleAdminDelete_(body);
+    if (body.action === 'adminUpdate') return handleAdminUpdate_(body);
     if (body.action === 'getImage') return handleGetImage_(body);
     if (body.action === 'searchReveal') return handleSearchReveal_(body);
 
@@ -869,6 +870,113 @@ function handleAdminExport_(body) {
   var all = getFilteredRecords_(body.search, body.class);
   logAudit_(auth.username, 'export', all.length + ' records (search="' + (body.search || '') + '", class="' + (body.class || '') + '")');
   return jsonOut_({ success: true, records: all });
+}
+
+/**
+ * POST { action: "adminUpdate", token, applicationId, fields, [photo, signature,
+ *        aadharFront, aadharBack, tc, matric] }
+ *
+ * Lets any logged-in admin correct plain data fields of an application.
+ * applicationId / submittedAt / updatedAt and every *FileId column can never be
+ * written through `fields`.
+ *
+ * Replacing files — photo, signature, Aadhaar front, Aadhaar back, TC (Class IX)
+ * and Matric certificate (Class XI) — is restricted to the account literally
+ * named "admin" (case-insensitive), enforced HERE; for anyone else those inputs
+ * are silently ignored. Only fresh base64 image data URLs are accepted (a bare
+ * file ID is ignored), and each goes through saveImage_() so it is a new PRIVATE
+ * Drive file. The previous file is left in Drive, not deleted.
+ * Returns { success, photoFileId, signatureFileId, aadharFrontFileId,
+ *           aadharBackFileId, tcFileId, matricFileId } (the current IDs).
+ */
+function handleAdminUpdate_(body) {
+  var auth = requireAdminToken_(body);
+  if (!auth.valid) {
+    return jsonOut_({ success: false, error: auth.error || 'Unauthorized' });
+  }
+  var isMainAdmin = String(auth.username || '').toLowerCase() === 'admin';
+  var appId = String(body.applicationId || '').trim();
+  if (!appId) return jsonOut_({ success: false, error: 'Missing applicationId' });
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var sheet = getSheet_();
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var appIdCol = headers.indexOf('applicationId');
+
+    var rowIndex = -1;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][appIdCol]).trim() === appId) { rowIndex = i; break; }
+    }
+    if (rowIndex === -1) return jsonOut_({ success: false, error: 'आवेदन नहीं मिला।' });
+
+    var rowValues = data[rowIndex].slice();
+    var fields = body.fields || {};
+    var blocked = ['applicationId', 'submittedAt', 'updatedAt', 'photoFileId', 'signatureFileId',
+                   'aadharFrontFileId', 'aadharBackFileId', 'tcFileId', 'matricFileId',
+                   'photoUrl', 'signatureUrl'];
+
+    // ---- plain data fields ----
+    Object.keys(fields).forEach(function (k) {
+      if (blocked.indexOf(k) !== -1) return;
+      var idx = headers.indexOf(k);
+      if (idx === -1) return;
+      var v = fields[k];
+      v = (v === undefined || v === null) ? '' : String(v).trim();
+      if (k === 'dob') v = formatDateDMY_(v);
+      if (k === 'aadhar' || k === 'otr') v = v.replace(/\D/g, '');
+      rowValues[idx] = v;
+    });
+
+    // ---- files: "admin" account only ----
+    var fileSpecs = [
+      { input: 'photo',       header: 'photoFileId',       suffix: '_photo' },
+      { input: 'signature',   header: 'signatureFileId',   suffix: '_signature' },
+      { input: 'aadharFront', header: 'aadharFrontFileId', suffix: '_aadharFront' },
+      { input: 'aadharBack',  header: 'aadharBackFileId',  suffix: '_aadharBack' },
+      { input: 'tc',          header: 'tcFileId',          suffix: '_tc' },
+      { input: 'matric',      header: 'matricFileId',      suffix: '_matric' }
+    ];
+    var replaced = [];
+    if (isMainAdmin) {
+      for (var f = 0; f < fileSpecs.length; f++) {
+        var spec = fileSpecs[f];
+        var raw = body[spec.input];
+        if (!raw || String(raw).indexOf('data:') !== 0) continue; // only fresh uploads
+        var colIdx = headers.indexOf(spec.header);
+        if (colIdx === -1) continue;
+        var res = saveImage_(raw, appId + spec.suffix);
+        if (res.error) return jsonOut_({ success: false, error: res.error, field: spec.input });
+        rowValues[colIdx] = res.fileId;
+        replaced.push(spec.input);
+      }
+    }
+
+    var nowTimestamp = Utilities.formatDate(new Date(), TIMEZONE, 'dd-MM-yyyy HH:mm');
+    var updCol = headers.indexOf('updatedAt');
+    if (updCol !== -1) rowValues[updCol] = nowTimestamp;
+
+    var sheetRow = rowIndex + 1;
+    sheet.getRange(sheetRow, 1, 1, headers.length).setValues([rowValues]);
+    var dobCol = headers.indexOf('dob');
+    if (dobCol !== -1) {
+      sheet.getRange(sheetRow, dobCol + 1).setNumberFormat('@').setValue(rowValues[dobCol]);
+    }
+
+    logAudit_(auth.username, 'admin_update',
+      'applicationId ' + appId + (replaced.length ? ' (files replaced: ' + replaced.join(', ') + ')' : ''));
+
+    var out = { success: true };
+    fileSpecs.forEach(function (sp) {
+      var ci = headers.indexOf(sp.header);
+      out[sp.header] = ci === -1 ? '' : String(rowValues[ci] || '');
+    });
+    return jsonOut_(out);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function handleAdminDelete_(body) {
