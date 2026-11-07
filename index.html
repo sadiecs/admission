@@ -1630,27 +1630,42 @@
     openModal(buildPreviewElement(data, data.applicationId));
   });
 
+  // Builds the printable / "Save as PDF" copy. It is laid out as ONE A4 page:
+  // the @page rule fixes the paper size (and, with zero page margin, also
+  // suppresses the browser's own date / "about:blank" header and footer),
+  // fields are arranged in a 4-column table (two label/value pairs per row),
+  // and fitToPage() shrinks the content slightly if it would still overflow,
+  // so it never spills onto a second sheet.
   function buildPrintableApplication(data, appId){
     var win = window.open('', '_blank');
     if(!win){ toast('कृपया पॉप-अप की अनुमति दें।'); return; }
 
     var doc = win.document;
     doc.open();
-    doc.write('<!DOCTYPE html><html lang="hi"><head><meta charset="UTF-8"><title>Application</title><style>' +
-      'body{font-family:"Noto Sans Devanagari",sans-serif;max-width:760px;margin:30px auto;color:#1c2430;}' +
-      'h1{font-size:1.2rem;text-align:center;margin:0;color:#0b2f5e;}' +
-      'h2{font-size:.95rem;text-align:center;margin:4px 0 2px;color:#0b2f5e;}' +
-      '.udise{text-align:center;font-size:.8rem;color:#5b6472;margin-bottom:14px;}' +
-      '.appid{text-align:center;font-weight:700;font-size:1.1rem;background:#eef2f8;padding:8px;border-radius:6px;margin-bottom:16px;}' +
-      'table{width:100%;border-collapse:collapse;font-size:.85rem;}' +
-      'td{padding:6px 8px;border:1px solid #d8dce2;}' +
-      'td.l{background:#f7f5ef;font-weight:600;width:42%;}' +
-      '.photos{display:flex;gap:16px;justify-content:center;margin:16px 0;}' +
+    doc.write('<!DOCTYPE html><html lang="hi"><head><meta charset="UTF-8"><meta name="viewport" content="width=820"><title>Application</title><style>' +
+      '@page{size:A4 portrait;margin:0;}' +
+      'html,body{margin:0;padding:0;background:#e5e7eb;}' +
+      'body{font-family:"Noto Sans Devanagari","Segoe UI",Arial,sans-serif;color:#1c2430;}' +
+      '#sheet{width:210mm;height:296mm;margin:0 auto;padding:8mm;box-sizing:border-box;background:#fff;overflow:hidden;}' +
+      '#content{width:100%;}' +
+      'h1{font-size:15px;text-align:center;margin:0;color:#0b2f5e;}' +
+      'h2{font-size:12px;text-align:center;margin:2px 0 1px;color:#0b2f5e;}' +
+      '.udise{text-align:center;font-size:10px;color:#5b6472;margin-bottom:6px;}' +
+      '.appid{text-align:center;font-weight:700;font-size:13px;background:#eef2f8;padding:5px;border-radius:4px;margin-bottom:8px;}' +
+      '.photos{display:flex;gap:14px;justify-content:center;align-items:center;margin:0 0 8px;}' +
       '.photos img{border:1px solid #d8dce2;}' +
-      '.decl{font-size:.78rem;color:#444;margin-top:16px;line-height:1.5;}' +
-      '.sign-area{display:flex;justify-content:space-between;margin-top:50px;font-size:.85rem;}' +
-      '@media print{.no-print{display:none;}}' +
+      'table{width:100%;border-collapse:collapse;font-size:10.5px;table-layout:fixed;}' +
+      'td{padding:3px 5px;border:1px solid #d8dce2;word-wrap:break-word;vertical-align:top;}' +
+      'td.l{background:#f7f5ef;font-weight:600;width:19%;}' +
+      '.decl{font-size:10px;color:#444;margin-top:10px;line-height:1.4;}' +
+      '.sign-area{display:flex;justify-content:space-between;margin-top:42px;font-size:11px;}' +
+      '.no-print{display:flex;gap:10px;justify-content:center;padding:10px 0;}' +
+      '.no-print button{padding:10px 18px;font-size:15px;cursor:pointer;border:1px solid #0b2f5e;border-radius:4px;background:#fff;color:#0b2f5e;font-weight:600;}' +
+      '.no-print button.pri{background:#0b2f5e;color:#fff;}' +
+      '@media print{html,body{background:#fff;}#sheet{margin:0;}.no-print{display:none;}}' +
       '</style></head><body>' +
+      '<div class="no-print"><button class="pri" id="pdfBtn">⬇ Download PDF</button><button onclick="window.print()">Print</button></div>' +
+      '<div id="sheet"><div id="content">' +
       '<h1>उ.मा.वि. चोचाही छपरा, पारू, मुजफ्फरपुर</h1>' +
       '<h2>UMV Chochahi Chhapra, Paroo, Muzaffarpur</h2>' +
       '<div class="udise">UDISE: 10140301702</div>' +
@@ -1659,7 +1674,7 @@
       '<table id="mainTable"></table>' +
       '<div class="decl">मैं यह घोषणा करता/करती हूँ कि ऊपर दी गई सभी सूचना सही है।</div>' +
       '<div class="sign-area"><span>अभिभावक हस्ताक्षर</span><span>विद्यार्थी हस्ताक्षर</span><span>प्रधानाध्यापक मोहर</span></div>' +
-      '<div class="no-print" style="text-align:center;margin-top:24px;"><button onclick="window.print()" style="padding:8px 16px;">Print / Save as PDF</button></div>' +
+      '</div></div>' +
       '</body></html>');
     doc.close();
 
@@ -1667,16 +1682,81 @@
     doc.getElementById('appIdBox').textContent = 'Application ID: ' + appId;
 
     var pBox = doc.getElementById('photosBox');
-    if(data.photo){ var p = doc.createElement('img'); p.src = data.photo; p.style.cssText = 'width:105px;height:90px;object-fit:contain;'; pBox.appendChild(p); }
-    if(data.signature){ var s = doc.createElement('img'); s.src = data.signature; s.style.cssText = 'width:150px;height:55px;object-fit:contain;'; pBox.appendChild(s); }
+    if(data.photo){ var p = doc.createElement('img'); p.src = data.photo; p.style.cssText = 'width:90px;height:77px;object-fit:contain;'; pBox.appendChild(p); }
+    if(data.signature){ var sg = doc.createElement('img'); sg.src = data.signature; sg.style.cssText = 'width:130px;height:48px;object-fit:contain;'; pBox.appendChild(sg); }
 
+    // Two label/value pairs per row; long values (e.g. the address) take a full row.
     var table = doc.getElementById('mainTable');
+    var tr = null, used = 0;
+    function newRow(){ tr = doc.createElement('tr'); table.appendChild(tr); used = 0; }
+    function addCell(cls, text, span){
+      var td = doc.createElement('td');
+      if(cls) td.className = cls;
+      if(span > 1) td.colSpan = span;
+      td.textContent = text;
+      tr.appendChild(td);
+    }
     Object.keys(fieldLabels).forEach(function(k){
       if(!data[k]) return;
-      var tr = doc.createElement('tr');
-      var td1 = doc.createElement('td'); td1.className = 'l'; td1.textContent = fieldLabels[k];
-      var td2 = doc.createElement('td'); td2.textContent = (k === 'dob') ? formatDateDMY(data[k]) : data[k];
-      tr.appendChild(td1); tr.appendChild(td2); table.appendChild(tr);
+      var label = fieldLabels[k];
+      var value = (k === 'dob') ? formatDateDMY(data[k]) : String(data[k]);
+      if(value.length > 36){
+        if(tr && used === 1){ addCell('l', ''); addCell('', ''); }
+        newRow();
+        addCell('l', label); addCell('', value, 3);
+        used = 2;
+      } else {
+        if(!tr || used >= 2) newRow();
+        addCell('l', label); addCell('', value);
+        used++;
+      }
+    });
+    if(tr && used === 1){ addCell('l', ''); addCell('', ''); }
+
+    // Safety net: if the content is still taller than the printable area, shrink it to fit.
+    // (transform rather than CSS zoom, so the PDF capture below renders it identically.)
+    function fitToPage(){
+      var c = doc.getElementById('content');
+      if(!c) return;
+      c.style.transform = ''; c.style.width = '100%';
+      var availPx = (296 - 16) * 96 / 25.4;
+      var h = c.scrollHeight;
+      if(h > availPx){
+        var sc = (availPx / h) * 0.98;
+        c.style.transformOrigin = 'top left';
+        c.style.transform = 'scale(' + sc + ')';
+        c.style.width = (100 / sc) + '%';
+      }
+    }
+    fitToPage();
+    win.addEventListener('load', fitToPage);
+    win.addEventListener('beforeprint', fitToPage);
+
+    // "Download PDF": builds the one-page A4 PDF directly, so it does not depend on the
+    // browser's print dialog (Android Chrome has no "pages per sheet"/paper-size options).
+    function loadLib(url, isReady){
+      return new Promise(function(resolve, reject){
+        if(isReady()) { resolve(); return; }
+        var sc = doc.createElement('script');
+        sc.src = url; sc.onload = resolve; sc.onerror = reject;
+        doc.head.appendChild(sc);
+      });
+    }
+    var pdfBtn = doc.getElementById('pdfBtn');
+    pdfBtn.addEventListener('click', function(){
+      var label = pdfBtn.textContent;
+      pdfBtn.disabled = true; pdfBtn.textContent = '⏳ PDF...';
+      fitToPage();
+      loadLib('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', function(){ return !!win.html2canvas; })
+        .then(function(){ return loadLib('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', function(){ return !!(win.jspdf && win.jspdf.jsPDF); }); })
+        .then(function(){ return win.html2canvas(doc.getElementById('sheet'), { scale: 2, backgroundColor: '#ffffff', useCORS: true }); })
+        .then(function(canvas){
+          var pdf = new win.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 296);
+          pdf.save('Application_' + appId + '.pdf');
+        })
+        .catch(function(){ win.alert('PDF नहीं बन सका। कृपया "Print" का उपयोग करें। / Could not create the PDF — please use Print.'); })
+        .then(function(){ pdfBtn.disabled = false; pdfBtn.textContent = label; });
     });
   }
 
