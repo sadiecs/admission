@@ -1304,6 +1304,100 @@ function handleSearchReveal_(body) {
   return jsonOut_({ success: true, record: record });
 }
 
+// =================================================================
+//     TOLERANT MATCHING FOR THE PUBLIC SEARCH (older / imported rows)
+// =================================================================
+// Older rows may hold the class as "XI" / "11" / "11th" instead of "Class XI",
+// and the date of birth as a real Sheet date (possibly shifted by a timezone, or
+// read with day/month swapped by a US-locale sheet) instead of dd/MM/yyyy text.
+// Search still requires class + DOB + Application ID/PEN to agree; it just
+// compares them in a format-insensitive way. The reveal step (Aadhaar check) is
+// unchanged, so this does not loosen what an outsider can actually obtain.
+
+/** "Class XI", "XI", "11", "11th", "class-11" -> "11". Unknown text -> lower-cased letters/digits. */
+function normalizeClass_(v) {
+  var s = String(v === undefined || v === null ? '' : v).toLowerCase()
+    .replace(/class|standard|std|कक्षा/g, '')
+    .replace(/(\d)(st|nd|rd|th)\b/g, '$1')
+    .replace(/[^a-z0-9]/g, '');
+  var roman = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12 };
+  if (roman.hasOwnProperty(s)) return String(roman[s]);
+  var n = s.match(/^0*(\d{1,2})$/);
+  if (n) return String(parseInt(n[1], 10));
+  return s;
+}
+
+/**
+ * Every dd/MM/yyyy string a stored date-of-birth value could reasonably mean:
+ * for a real Date, its day as seen in the script timezone AND in the
+ * spreadsheet's own timezone; for text, dd/MM/yyyy normalised (accepts - . /
+ * separators). Each candidate is also offered with day and month swapped when
+ * both are <= 12 (a US-locale sheet reads "10/02/2010" as 2 October).
+ */
+function dobCandidates_(value, sheetTz) {
+  var out = [];
+  function add(x) { if (x && out.indexOf(x) === -1) out.push(x); }
+  function swapped(x) {
+    var m = String(x).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return '';
+    if (Number(m[1]) > 12 || Number(m[2]) > 12) return '';
+    return m[2] + '/' + m[1] + '/' + m[3];
+  }
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    if (isNaN(value.getTime())) return out;
+    [TIMEZONE, sheetTz].forEach(function (tz) {
+      if (!tz) return;
+      var f = Utilities.formatDate(value, tz, 'dd/MM/yyyy');
+      add(f); add(swapped(f));
+    });
+    return out;
+  }
+  var str = String(value === undefined || value === null ? '' : value).trim();
+  if (/^\d{1,2}[-.\/]\d{1,2}[-.\/]\d{4}/.test(str)) str = str.replace(/[-.]/g, '/');
+  var f2 = formatDateDMY_(str);
+  add(f2); add(swapped(f2));
+  return out;
+}
+
+/**
+ * ONE-OFF DIAGNOSTIC — run from the Apps Script editor (select it, click Run,
+ * read the output under Executions / View > Logs). Not wired to any endpoint.
+ * Set APP_ID below, e.g. 'UHSK2607136862'. It prints how that application is
+ * actually stored in the Sheet and why a search for it would or wouldn't match.
+ */
+function diagnoseApplication_() {
+  var APP_ID = 'UHSK2607136862';   // <-- the Application ID that can't be found
+  var SEARCH_CLASS = 'Class XI';   // <-- what you pick in the form
+  var SEARCH_DOB = '10/02/2010';   // <-- dd/MM/yyyy as you enter it
+
+  var sheet = getSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var sheetTz = SpreadsheetApp.openById(getSheetId_()).getSpreadsheetTimeZone();
+  Logger.log('Rows (excluding header): ' + (data.length - 1) + ' | sheet timezone: ' + sheetTz + ' | script timezone: ' + TIMEZONE);
+  var idx = { appId: headers.indexOf('applicationId'), cls: headers.indexOf('admClass'), dob: headers.indexOf('dob'), pen: headers.indexOf('pen') };
+  Logger.log('Header positions (-1 = missing!): ' + JSON.stringify(idx));
+
+  var found = 0;
+  for (var i = 1; i < data.length; i++) {
+    var rowText = data[i].map(function (c) { return String(c); }).join('|').toLowerCase();
+    if (rowText.indexOf(String(APP_ID).toLowerCase()) === -1) continue;
+    found++;
+    var row = data[i];
+    var rawDob = idx.dob === -1 ? '(no dob column)' : row[idx.dob];
+    var cands = idx.dob === -1 ? [] : dobCandidates_(rawDob, sheetTz);
+    Logger.log('Sheet row ' + (i + 1) + ' contains that ID.');
+    Logger.log('  applicationId cell: ' + JSON.stringify(idx.appId === -1 ? '(no column)' : row[idx.appId]));
+    Logger.log('  admClass cell: ' + JSON.stringify(idx.cls === -1 ? '(no column)' : row[idx.cls]) +
+               ' -> normalised "' + normalizeClass_(row[idx.cls]) + '" vs form "' + normalizeClass_(SEARCH_CLASS) + '" => ' +
+               (normalizeClass_(row[idx.cls]) === normalizeClass_(SEARCH_CLASS) ? 'MATCH' : 'NO MATCH'));
+    Logger.log('  dob cell: type=' + Object.prototype.toString.call(rawDob) + ' value=' + JSON.stringify(rawDob) +
+               ' -> candidates ' + JSON.stringify(cands) + ' vs form "' + SEARCH_DOB + '" => ' +
+               (cands.indexOf(SEARCH_DOB) !== -1 ? 'MATCH' : 'NO MATCH'));
+  }
+  if (!found) Logger.log('No row in the "data" tab contains "' + APP_ID + '" in ANY column — it is not in this Sheet/tab (wrong SHEET_ID, different tab, or the row was deleted).');
+}
+
 // ---------------------- GET: search lookup ----------------------
 function doGet(e) {
   try {
@@ -1329,15 +1423,17 @@ function doGet(e) {
       var appIdIdx = headers.indexOf('applicationId');
       var penIdx = headers.indexOf('pen');
       var dobIdx = headers.indexOf('dob');
+      var sheetTz = SpreadsheetApp.openById(getSheetId_()).getSpreadsheetTimeZone();
+      var clsNorm = normalizeClass_(cls);
 
       for (var i = data.length - 1; i >= 1; i--) {
         var row = data[i];
-        var classMatch = String(row[classIdx]).trim() === cls;
+        // Format-insensitive class / DOB comparison (see normalizeClass_ / dobCandidates_)
+        var classMatch = normalizeClass_(row[classIdx]) === clsNorm;
         var keyMatch = type === 'appId'
           ? String(row[appIdIdx]).trim().toLowerCase() === value
           : String(row[penIdx]).trim().toLowerCase() === value;
-        var rowDob = formatDateDMY_(row[dobIdx]);
-        var dobMatch = rowDob === dobQuery;
+        var dobMatch = dobCandidates_(row[dobIdx], sheetTz).indexOf(dobQuery) !== -1;
 
         if (classMatch && keyMatch && dobMatch) {
           var record = {};

@@ -147,6 +147,30 @@ If the crop screen fails to open, the original file is used. `AUTO_CROP_FIELDS` 
 
 ---
 
+## Printable application & PDF download (client-side)
+
+"Download application" (after submitting, or from the public search flow) opens a new window built by `buildPrintableApplication()` in `index.html`:
+
+- **One A4 page by design.** `@page { size: A4; margin: 0 }` fixes the paper size and also stops the browser printing its own date / "about:blank" header and footer. Fields are rendered in a four-column table (two label/value pairs per row); long values such as the address take a full row.
+- **Shrink-to-fit safety net.** `fitToPage()` measures the content and, if it is taller than the printable area, applies a CSS `transform: scale()` so it never spills to a second sheet (a transform rather than `zoom`, so the PDF capture renders it identically).
+- **Download PDF button.** Builds the PDF in the browser, independent of the print dialog (Android Chrome's dialog has no paper-size or pages-per-sheet options). It loads html2canvas 1.4.1 and jsPDF 2.5.1 from cdnjs on first click, captures the page at 2x, and saves a single A4 PDF named `Application_<ID>.pdf`. The PDF is an image of the page, so text in it is not selectable. If the libraries cannot be loaded (offline), an alert points the user to the **Print** button.
+- **Print button.** Uses the browser's own print dialog, which honours the A4 `@page` rule.
+
+---
+
+## Public search matching
+
+`doGet?action=search` requires class + date of birth + (Application ID or PEN) to agree, but compares class and DOB in a format-insensitive way so older or imported rows are still found:
+
+- `normalizeClass_()` treats "Class XI", "XI", "11", "11th" and "class-11" as the same class (Class IX is still different from XI).
+- `dobCandidates_()` expands a stored DOB into every dd/MM/yyyy string it could mean: text with `/`, `-` or `.` separators; for a real Sheet date, its day in both the script timezone and the spreadsheet's timezone; and each of those with day and month swapped when both are 12 or less (a US-locale Sheet reads 10/02/2010 as 2 October).
+
+This only relaxes formatting. The Application ID/PEN must still match exactly, and the Aadhaar check at the reveal step is unchanged.
+
+**`diagnoseApplication_()`** is a one-off function for the Apps Script editor (not wired to any endpoint). Set `APP_ID`, `SEARCH_CLASS` and `SEARCH_DOB` at its top, run it, and read the log under Executions: it shows how that record is actually stored (class cell, DOB type and value, header positions) and whether each would match, or reports that the ID is not in the Sheet at all.
+
+---
+
 ## Request flows
 
 ### Submitting a new application

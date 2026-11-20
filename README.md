@@ -33,7 +33,7 @@ For how the pieces fit together, see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 - **Preview before submitting** — a modal shows exactly what will be sent.
 - **Edit a submitted application** — re-verify with Aadhaar + mobile number, then load and update the original record (an edit updates the existing row; no duplicate is created). Existing photo, signature and documents are reused unless the applicant replaces them.
 - **Download / print an application** — generates a printable, styled copy in a new window (usable as "Print to PDF"). The window has a **Download PDF** button that creates the one-page A4 PDF directly (works on Android and iPhone, where the print dialog has no paper-size or pages-per-sheet options) and a **Print** button. It is laid out to fit **one A4 page**: fields are in a compact two-pair-per-row table, the page size is fixed to A4 with no browser header/footer, and the content is scaled down automatically if it would otherwise overflow. The PDF button loads two small libraries (html2canvas, jsPDF) from cdnjs, so it needs an internet connection; the PDF is an image of the page, so its text can't be selected.
-- **Self-lookup with masked preview** — search by class + DOB + (Application ID or PEN) without logging in; the result is a **masked preview** (most digits of Aadhaar/mobile/bank details hidden, no images) that the applicant must confirm before the **full** record is released. Confirming also requires typing the applicant's own 12-digit Aadhaar number.
+- **Self-lookup with masked preview** — search by class + DOB + (Application ID or PEN) without logging in (class and DOB are compared format-insensitively, so older records stored as "XI" / "11" or with a differently formatted date are still found); the result is a **masked preview** (most digits of Aadhaar/mobile/bank details hidden, no images) that the applicant must confirm before the **full** record is released. Confirming also requires typing the applicant's own 12-digit Aadhaar number.
 - **One application per Aadhaar** — duplicate submissions on the same identity number are rejected (edit is offered instead).
 - **Lightweight arithmetic CAPTCHA** on the edit-lookup and search actions, on top of server-side rate limiting.
 - **Confirmation email** — sent only if the applicant filled in the optional email field; contains serial number, Application ID, student name, class, and roll no.
@@ -59,6 +59,7 @@ For how the pieces fit together, see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 - **Append-only audit log** — an `auditLog` tab records logins, failed logins, exports, deletions, admin updates (including which files were replaced) and public search reveals.
 - **Owner/staff notification email** — sent on *every* submission and edit, regardless of whether the applicant gave an email address.
 - **SMS notifications** — stubbed out and disabled by default.
+- **One-off diagnostic** — `diagnoseApplication_()` (run from the editor) explains why a particular application can't be found by showing how it is stored in the Sheet.
 - **One-off legacy data importer** — a function not wired to any endpoint, for migrating from an older spreadsheet-based version.
 
 ---
